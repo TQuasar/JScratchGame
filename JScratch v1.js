@@ -1,7 +1,33 @@
 // @JSratchGame Engine by TQuasar https://github.com/TQuasar.
 
+// MIT License
+
+// Copyright (c) 2026 Quasar
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 "use strict";
 const scratchVM = vm;
+if (!scratchVM.JScratchMounter) scratchVM.JScratchMounter = {};
+
+const mounter = scratchVM.JScratchMounter;
+
 try {
 class JScratchError extends Error {
     /**
@@ -260,19 +286,14 @@ class Musician {
 }
 
 class KeysListener {
+    static mouseX = 0;
+    static mouseY = 0;
+
     static {
-        document.getElementById("JScratchListenerStyle")?.remove();
-        const styleForCanvas = document.createElement("style");
-        styleForCanvas.id = "JScratchListenerStyle";
-        styleForCanvas.innerText = `
-            .JScratchListener {
-                outline: none;
-            };
-            .JScratchListener:focus {
-                outline: none
-            }
-        `;
-        document.head.append(styleForCanvas);
+        document.addEventListener("mousemove", e => {
+            this.mouseX = e.clientX;
+            this.mouseY = e.clientY;
+        });
     };
 
     /**
@@ -282,12 +303,18 @@ class KeysListener {
 
     #listeners;
     #targetElement;
+    #observe;
     /**
      * @typedef {{state: keyState, press: boolean, timerStart: number, counter: number}} key
      */
 
     /** @type {Map<string, key>} */
     #keyboard = new Map();
+
+    #leftEdge = 0;
+    #rightEdge = 0;
+    #topEdge = 0;
+    #bottomEdge = 0;
 
     /**
      * @param element {HTMLElement} The element to listen
@@ -297,15 +324,21 @@ class KeysListener {
 
         const listeners = {
             "keydown": /**@param {KeyboardEvent} e */ (e) => {
+                if (!this.#inBox()) return;
+
                 e.preventDefault();
                 this.createKey(e.key);
                 if (e.isTrusted) this.#press(e.key, true);
             },
             "keyup": /**@param {KeyboardEvent} e */ (e) => {
+                if (!this.#inBox()) return;
+
                 this.createKey(e.key);
                 if (e.isTrusted) this.#press(e.key, false);
             },
             "mousedown": /**@param {MouseEvent} e */ (e) => {
+                if (!this.#inBox()) return;
+
                 this.createKey("mouseLeft");
                 this.createKey("mouseRight");
                 this.createKey("mouseMid");
@@ -329,6 +362,8 @@ class KeysListener {
                 }
             },
             "mouseup": /**@param {MouseEvent} e */ (e) => {
+                if (!this.#inBox()) return;
+
                 this.createKey("mouseLeft");
                 this.createKey("mouseRight");
                 this.createKey("mouseMid");
@@ -352,6 +387,8 @@ class KeysListener {
                 }
             },
             "wheel": /**@param {WheelEvent} e */ (e) => {
+                if (!this.#inBox()) return;
+
                 e.preventDefault();
                 this.createKey("wheelUp");
                 this.createKey("wheelDown");
@@ -371,14 +408,25 @@ class KeysListener {
         this.#listeners = listeners;
 
         for (const [type, func] of Object.entries(listeners)) {
-            element.addEventListener(type, func);
+            document.addEventListener(type, func);
         }
 
-        element.tabIndex = 0;
-        element.classList.add("JScratchListener");
-        element.focus();
-        element.addEventListener("click", () => element.focus());
-        element.addEventListener("blur", () => this.#keyboard.forEach((value, key) => this.#press(key, false)));
+        const observe = new ResizeObserver(() => this.#getBox());
+        observe.observe(element);
+        this.#getBox();
+        this.#observe = observe;
+    }
+
+    #inBox() {
+        return KeysListener.mouseX >= this.#leftEdge && KeysListener.mouseX <= this.#rightEdge && KeysListener.mouseY <= this.#bottomEdge && KeysListener.mouseY >= this.#topEdge;
+    }
+
+    #getBox() {
+        const rect = this.#targetElement.getBoundingClientRect();
+        this.#leftEdge = rect.left;
+        this.#rightEdge = rect.right;
+        this.#topEdge = rect.top;
+        this.#bottomEdge = rect.bottom;
     }
 
     /**
@@ -430,6 +478,8 @@ class KeysListener {
         for (const [type, func] of Object.entries(this.#listeners)) {
             this.#targetElement.removeEventListener(type, func);
         }
+        this.#observe.unobserve(this.#targetElement);
+        this.#observe = null;
     }
 
     /**
@@ -752,6 +802,30 @@ class MathPlus {
             const finalY = this.translationY(rotatedY, offsetY);
 
             return [finalX, finalY];
+        }
+
+        /**
+         * Inverts the complete 2D transformation applied by translate.
+         * @param {number} x - The transformed x-coordinate.
+         * @param {number} y - The transformed y-coordinate.
+         * @param {number} offsetX - The horizontal translation offset used by the forward transform.
+         * @param {number} offsetY - The vertical translation offset used by the forward transform.
+         * @param {number} scale - The uniform scale factor used by the forward transform.
+         * @param {number} rotate - The rotation angle used by the forward transform.
+         * @returns {[number, number]} An array containing the original [x, y] coordinates.
+         */
+        static inverseTranslate(x, y, offsetX, offsetY, scale, rotate) {
+            if (scale === 0) return [x - offsetX, y - offsetY];
+
+            const translatedX = x - offsetX;
+            const translatedY = y - offsetY;
+            const scaledX = translatedX / scale;
+            const scaledY = translatedY / scale;
+
+            const rotatedX = this.rotateX(scaledX, scaledY, -rotate);
+            const rotatedY = this.rotateY(scaledX, scaledY, -rotate);
+
+            return [rotatedX, rotatedY];
         }
     };
 }
@@ -1360,6 +1434,11 @@ class Hitbox extends Componentable {
     #offsetY = 0;
     #scale = 1;
     #rotate = 0;
+    #followCam = false;
+    #cameraX = 0;
+    #cameraY = 0;
+    #cameraScale = 1;
+    #cameraRotate = 0;
 
     /**
      * Set a hitbox by name.
@@ -1409,7 +1488,17 @@ class Hitbox extends Componentable {
      * @param {number} rotate 
      */
     translate(offsetX, offsetY, scale, rotate, followCam, cameraX, cameraY, cameraScale, cameraRotate) {
-        if (offsetX === this.#offsetX && offsetY === this.#offsetY && scale === this.#scale && rotate === this.#rotate) return;
+        if (
+            offsetX === this.#offsetX &&
+            offsetY === this.#offsetY &&
+            scale === this.#scale &&
+            rotate === this.#rotate &&
+            followCam === this.#followCam &&
+            cameraX === this.#cameraX &&
+            cameraY === this.#cameraY &&
+            cameraScale === this.#cameraScale &&
+            cameraRotate === this.#cameraRotate
+        ) return;
         for (const [key, polygon] of Object.entries(this.#boxes)) {
             this.#boxes[key] = polygon.translate(offsetX, offsetY, scale, rotate, followCam, cameraX, cameraY, cameraScale, cameraRotate);
         }
@@ -1417,6 +1506,11 @@ class Hitbox extends Componentable {
         this.#offsetY = offsetY;
         this.#scale = scale;
         this.#rotate = rotate;
+        this.#followCam = followCam;
+        this.#cameraX = cameraX;
+        this.#cameraY = cameraY;
+        this.#cameraScale = cameraScale;
+        this.#cameraRotate = cameraRotate;
     }
 
     get boxes() {
@@ -1479,7 +1573,12 @@ class Timer {
     #timers = new Map();
     constructor() {}
 
+    hasTimer(name) {
+        return this.#timers.has(name);
+    }
+
     startTimer(name) {
+        if (this.hasTimer(name)) throw new Error(`Timer ${name} has been created.`);
         this.#timers.set(name, Date.now());
     }
 
@@ -1528,11 +1627,11 @@ class ScratchTools {
             }
 
             static get mouseX() {
-                return MathPlus.between(0, scratchVM?.runtime?.ioDevices?.mouse?._clientX, this.stageWidth) - this.stageWidth / 2;
+                return MathPlus.between(-this.stageWidth / 2, scratchVM?.runtime?.ioDevices?.mouse?._scratchX, this.stageWidth / 2);
             }  
 
             static get mouseY() {
-                return MathPlus.between(0, scratchVM?.runtime?.ioDevices?.mouse?._clientY, this.stageHeight) - this.stageHeight / 2;
+                return MathPlus.between(-this.stageHeight / 2, scratchVM?.runtime?.ioDevices?.mouse?._scratchY, this.stageHeight / 2);
             }  
         };
 
@@ -1598,8 +1697,8 @@ class ScratchTools {
             stageHeight: 360,
             ioDevices: {
                 mouse: {
-                    _clientX: 0,
-                    _clientY: 0,
+                    _scratchX: 0,
+                    _scratchY: 0,
                 }
             }
         };
@@ -1620,6 +1719,8 @@ class JScratch {
     #keysListener;
     /**@type {EventBus} */
     #eventBus;
+    /**@type {Timer} */
+    #timers = new Timer();
 
     #globalVariables = new Variable();
 
@@ -1719,7 +1820,14 @@ class JScratch {
         const Action = class {
             /**@type {number} */
             static #bindID;
+
+            /**
+             * Bind a specific entity ID as the current action target.
+             * @param {number} entityId The entity ID to bind.
+             * @throws {TypeError} If entityId is not a number.
+             */
             static bindEntity(entityId) {
+                Action.throwTypeError(entityId, "number", "bindEntity", "entityId");
                 this.#bindID = entityId;
             }
 
@@ -1745,7 +1853,14 @@ class JScratch {
                 variable: new Variable()
             };
 
+            /**
+             * Resolve the default value for a component name.
+             * @param {string} name The component name to resolve.
+             * @returns {any} A cloned Componentable or the raw default value.
+             * @throws {TypeError} If name is not a string.
+             */
             static getDefaultComponent(name) {
+                Action.throwTypeError(name, "string", "getDefaultComponent", "name");
                 let value;
                 if (Object.hasOwn(this.defaultComponents, name)) {
                     value = this.defaultComponents[name];
@@ -1760,15 +1875,24 @@ class JScratch {
                 }
             }
 
+            /**
+             * Validate an input value against a JavaScript type.
+             * @param {any} value The value to validate.
+             * @param {string} type The expected JavaScript type name.
+             * @param {string} path The API path for the error message.
+             * @param {string} name The argument name for the error message.
+             * @throws {TypeError} If the value does not match the expected type.
+             */
             static throwTypeError(value, type, path, name) {
                 if (typeof value !== type) throw new TypeError(`Action.${path}'s ${name} must be a ${type}.`);
             };
 
             static motion = class {
                 /**
-                 * The motion_move takes steps forward for the bound entity.
-                 * @param {number} step The step to add.
-                 * @throws {TypeError} If step is not number, it will throw TypeError.
+                 * Move the bound entity forward by a given number of steps.
+                 * @param {number} step The step length to move.
+                 * @returns {void}
+                 * @throws {TypeError} If step is not a number.
                  */
                 static move(step) {
                     Action.throwTypeError(step, "number", "motion.move", "step");
@@ -1778,9 +1902,10 @@ class JScratch {
                 };
 
                 /**
-                 * The motion_point lets the bound entity point to specified direction.
-                 * @param {number} rotate The direction to point.
-                 * @throws {TypeError} If rotate is not number, it will throw TypeError.
+                 * Set the bound entity's rotation to a specific direction.
+                 * @param {number} rotate The target rotation in degrees.
+                 * @returns {void}
+                 * @throws {TypeError} If rotate is not a number.
                  */
                 static point(rotate) {
                     Action.throwTypeError(rotate, "number", "motion.point", "rotate");
@@ -1789,10 +1914,11 @@ class JScratch {
                 };
 
                 /**
-                 * The motion_pointEntity lets the bound entity point to specified entity.
-                 * @param {number} entityId The id of the entity that will point to.
-                 * @throws {TypeError} If entityId is not number, it will throw TypeError.
-                 * @throws {JScratchError.IdError} If entityId is not exist, it will throw IdError.
+                 * Rotate the bound entity toward another entity.
+                 * @param {number} entityId The target entity ID.
+                 * @returns {void}
+                 * @throws {TypeError} If entityId is not a number.
+                 * @throws {JScratchError.IdError} If the target entity does not exist.
                  */
                 static pointEntity(entityId) {
                     Action.throwTypeError(entityId, "number", "motion.pointEntity", "entityId");
@@ -1808,10 +1934,11 @@ class JScratch {
                 };
 
                 /**
-                 * The motion_pointXY lets the bound entity point to the specified position.
-                 * @param {number} x The target x to point.
-                 * @param {number} y The target y to point.
-                 * @throws {TypeError} If x or y is not number, it will throw TypeError.
+                 * Rotate the bound entity toward a world-space coordinate.
+                 * @param {number} x The target x position.
+                 * @param {number} y The target y position.
+                 * @returns {void}
+                 * @throws {TypeError} If x or y is not a number.
                  */
                 static pointXY(x, y) {
                     Action.throwTypeError(x, "number", "motion.pointXY", "x");
@@ -1826,57 +1953,68 @@ class JScratch {
                         )
                     );
                 };
+
                 /**
-                 * The motion_pointMouse lets the bound entity point to the mouse.
+                 * Rotate the bound entity to face the current mouse position.
+                 * @returns {void}
                  */
                 static pointMouse() {
-                    Action.component.setComponent(
-                        Action.#bindID,
-                        "rotate", 
-                        MathPlus.atan2(
-                            Action.sensing.mouseY - this.myY,
-                            Action.sensing.mouseX - this.myX
-                        )
+                    const playerScreen = JScratchThis.#cameraManager.translate(this.myX, this.myY);
+                    const degrees = MathPlus.atan2(
+                        Action.sensing.mouseY - playerScreen[1],
+                        Action.sensing.mouseX - playerScreen[0]
                     );
+                    Action.component.setComponent(Action.#bindID, "rotate", degrees);
                 };
+
                 /**
-                 * The motion_pointRandom rotates the bound entity to a random direction.
+                 * Rotate the bound entity to a random direction.
+                 * @returns {void}
                  */
                 static pointRandom() {
                     Action.component.setComponent(Action.#bindID, "rotate", MathPlus.random(0, 360));
                 };
+
                 /**
-                 * The motion_turn rotates counterclockwise the bound entity specified degrees.
-                 * @param {number} rotate The degrees to rotate.
+                 * Rotate the bound entity by a relative amount.
+                 * @param {number} rotate The relative rotation delta in degrees.
+                 * @returns {void}
+                 * @throws {TypeError} If rotate is not a number.
                  */
                 static turn(rotate) {
                     Action.throwTypeError(rotate, "number", "motion.turn", "rotate");
                     Action.component.addComponent(Action.#bindID, "rotate", rotate);
                 };
+
                 /**
-                 * The motion_changeX adds the specified x to the bound entity's x.
-                 * @param {number} x The x to add.
-                 * @throws {TypeError} If x is not number, it will throw TypeError.
+                 * Add to the bound entity's x position.
+                 * @param {number} x The x delta to apply.
+                 * @returns {void}
+                 * @throws {TypeError} If x is not a number.
                  */
                 static changeX(x) {
                     Action.throwTypeError(x, "number", "motion.changeX", "x");
                     Action.component.addComponent(Action.#bindID, "x", x);
                 };
+
                 /**
-                 * The motion_changeY adds the specified y to the bound entity's y.
-                 * @param {number} y The y to add.
-                 * @throws {TypeError} If y is not number, it will throw TypeError.
+                 * Add to the bound entity's y position.
+                 * @param {number} y The y delta to apply.
+                 * @returns {void}
+                 * @throws {TypeError} If y is not a number.
                  */
                 static changeY(y) {
                     Action.throwTypeError(y, "number", "motion.changeY", "y");
 
                     Action.component.addComponent(Action.#bindID, "y", y);
                 };
+
                 /**
-                 * The motion_changePosition adds x and y of the bound entity.
-                 * @param {number} x The x to add.
-                 * @param {number} y The y to add.
-                 * @throws {TypeError} If one of x or y is not number, it will throw TypeError.
+                 * Add to the bound entity's position.
+                 * @param {number} x The x delta to apply.
+                 * @param {number} y The y delta to apply.
+                 * @returns {void}
+                 * @throws {TypeError} If x or y is not a number.
                  */
                 static changePosition(x, y) {
                     Action.throwTypeError(x, "number", "motion.changePosition", "x");
@@ -1885,11 +2023,13 @@ class JScratch {
                     Action.component.addComponent(Action.#bindID, "x", x);
                     Action.component.addComponent(Action.#bindID, "y", y);
                 };
+
                 /**
-                 * The motion_goto moves the bound entity to the specified position.
-                 * @param {number} x The x of target position.
-                 * @param {number} y The y of target position.
-                 * @throws {TypeError} If one of x or y is not number, it will throw TypeError.
+                 * Move the bound entity to an absolute position.
+                 * @param {number} x The target x position.
+                 * @param {number} y The target y position.
+                 * @returns {void}
+                 * @throws {TypeError} If x or y is not a number.
                  */
                 static goto(x, y) {
                     Action.throwTypeError(x, "number", "motion.goto", "x");
@@ -1898,48 +2038,57 @@ class JScratch {
                     Action.component.setComponent(Action.#bindID, "x", x);
                     Action.component.setComponent(Action.#bindID, "y", y);
                 };
+
                 /**
-                 * The motion_goRandom moves the bound entity to a random position in screen.
+                 * Move the bound entity to a random position within the current camera view.
+                 * @returns {void}
                  */
                 static goRandom() {
                     Action.component.setComponent(Action.#bindID, "x", JScratchThis.#cameraManager.randomX);
                     Action.component.setComponent(Action.#bindID, "y", JScratchThis.#cameraManager.randomY);
                 };
+
                 /**
-                 * The motion_goX sets the x of bound entity with the specified x.
-                 * @param {number} x The x to go to.
-                 * @throws {TypeError} If x is not number, it will throw TypeError.
+                 * Set the bound entity's x position to an absolute value.
+                 * @param {number} x The target x position.
+                 * @returns {void}
+                 * @throws {TypeError} If x is not a number.
                  */
                 static goX(x) {
-                    Action.throwTypeError(x, "number", "motion.goto", "x");
+                    Action.throwTypeError(x, "number", "motion.goX", "x");
                     Action.component.setComponent(Action.#bindID, "x", x);
                 };
+
                 /**
-                 * The motion_goY sets the the y of bound entity with the specified y.
-                 * @param {number} y The y to go to.
-                 * @throws {TypeError} If y is not number, it will throw TypeError.
+                 * Set the bound entity's y position to an absolute value.
+                 * @param {number} y The target y position.
+                 * @returns {void}
+                 * @throws {TypeError} If y is not a number.
                  */
                 static goY(y) {
-                    Action.throwTypeError(y, "number", "motion.goto", "y");
+                    Action.throwTypeError(y, "number", "motion.goY", "y");
                     Action.component.setComponent(Action.#bindID, "y", y);
                 };
+
                 /**
-                 * Return the x of the bound entity.
-                 * @type {number}
+                 * Get the bound entity's x position.
+                 * @returns {number}
                  */
                 static get myX() {
                     return Action.component.getComponent(Action.#bindID, "x");
                 };
+
                 /**
-                 * Return the y of the bound entity.
-                 * @type {number}
+                 * Get the bound entity's y position.
+                 * @returns {number}
                  */
                 static get myY() {
                     return Action.component.getComponent(Action.#bindID, "y");
                 };
+
                 /**
-                 * Return the rotation of the bound entity.
-                 * @type {number}
+                 * Get the bound entity's rotation.
+                 * @returns {number}
                  */
                 static get myRotate() {
                     return Action.component.getComponent(Action.#bindID, "rotate");
@@ -1947,117 +2096,151 @@ class JScratch {
             };
             static looks = class {
                 /**
-                 * The looks_setSkin let the bound entity dress the specified skin on.
-                 * @param {string} skin The name of skin.
+                 * Set the bound entity's skin.
+                 * @param {string} skin The skin name to apply.
+                 * @returns {void}
+                 * @throws {TypeError} If skin is not a string.
                  */
                 static setSkin(skin) {
                     Action.throwTypeError(skin, "string", "looks.setSkin", "skin");
                     Action.component.setComponent(Action.#bindID, "skin", skin);
                 };
+
                 /**
-                 * The looks_setScale sets the scale of the bound entity.
-                 * @param {number} scale The scale of the bound entity (default scale is 1).
+                 * Set the bound entity's scale.
+                 * @param {number} scale The new scale value.
+                 * @returns {void}
+                 * @throws {TypeError} If scale is not a number.
                  */
                 static setScale(scale) {
                     Action.throwTypeError(scale, "number", "looks.setScale", "scale");
                     Action.component.setComponent(Action.#bindID, "scale", scale);
                 };
+
                 /**
-                 * The looks_changeScale adds the given scale to the bound entity's scale.
-                 * @param {number} scale The scale to add.
+                 * Increase the bound entity's scale by a delta.
+                 * @param {number} scale The scale delta to add.
+                 * @returns {void}
+                 * @throws {TypeError} If scale is not a number.
                  */
                 static changeScale(scale) {
                     Action.throwTypeError(scale, "number", "looks.changeScale", "scale");
                     Action.component.addComponent(Action.#bindID, "scale", scale);
                 };
+
                 /**
-                 * The looks_visible sets the visibility of bound entity.
-                 * @param {boolean} visible Is the bound entity visible?
+                 * Set the bound entity's visibility state.
+                 * @param {boolean} visible Whether the entity should be visible.
+                 * @returns {void}
+                 * @throws {TypeError} If visible is not a boolean.
                  */
                 static visible(visible) {
                     Action.throwTypeError(visible, "boolean", "looks.visible", "visible");
                     Action.component.setComponent(Action.#bindID, "visible", visible);
                 };
+
                 /**
-                 * The looks_setLayer sets the level of layer of the bound entity.
-                 * @param {string} level The level that defined before.
+                 * Set the bound entity's layer level.
+                 * @param {string} level The layer level name.
+                 * @returns {void}
+                 * @throws {TypeError} If level is not a string.
                  */
                 static setLevel(level) {
                     Action.throwTypeError(level, "string", "looks.setLevel", "level");
                     Action.component.getComponent(Action.#bindID, "layer").level = level;
                 }
+
                 /**
-                 * The looks_setZIndex sets the index of layer of the bound entity.
-                 * @param {number} index The index in the level.
+                 * Set the bound entity's layer index.
+                 * @param {number} index The z-index inside the layer.
+                 * @returns {void}
+                 * @throws {TypeError} If index is not a number.
                  */
                 static setZIndex(index) {
                     Action.throwTypeError(index, "number", "looks.setZIndex", "index");
                     Action.component.getComponent(Action.#bindID, "layer").index = index;
                 }
+
                 /**
-                 * The looks_sortByY set the entity's index of the layer to the bound entity's y.
+                 * Sort the entity in its layer by its y position.
+                 * @returns {void}
                  */
                 static sortByY() {
                     this.setZIndex(Action.motion.myY);
                 }
+
                 /**
-                 * Create a Layer with given level and index.
-                 * @param {string} level The level of layer.
-                 * @param {index} index The index of level
+                 * Create a new layer instance with the given level and index.
+                 * @param {string} level The layer level name.
+                 * @param {number} index The layer index.
                  * @returns {LayerManager.Layer}
+                 * @throws {TypeError} If level is not a string or index is not a number.
                  */
                 static newLayer(level, index) {
+                    Action.throwTypeError(level, "string", "looks.newLayer", "level");
+                    Action.throwTypeError(index, "number", "looks.newLayer", "index");
                     return new JScratchThis.#layerManager.Layer(level, index);
                 }
+
                 /**
-                 * Return the skin of the bound entity.
-                 * @type {string}
+                 * Get the bound entity's skin name.
+                 * @returns {string}
                  */
                 static get mySkin() {
                     return Action.component.getComponent(Action.#bindID, "skin");
                 }
+
                 /**
-                 * Return the scale of the bound entity.
-                 * @type {number}
+                 * Get the bound entity's scale.
+                 * @returns {number}
                  */
                 static get myScale() {
                     return Action.component.getComponent(Action.#bindID, "scale");
                 }
+
                 /**
-                 * Return the visibility of the bound entity.
-                 * @type {boolean}
+                 * Get the bound entity's visibility state.
+                 * @returns {boolean}
                  */
                 static get myVisibility() {
                     return Action.component.getComponent(Action.#bindID, "visible");
                 }
+
                 /**
-                 * Return the level of the bound entity.
-                 * @type {string}
+                 * Get the bound entity's layer level name.
+                 * @returns {string}
                  */
                 static get myLevel() {
                     return Action.component.getComponent(Action.#bindID, "layer").level;
                 }
+
                 /**
-                 * Return the zindex of the bound entity.
-                 * @type {number}
+                 * Get the bound entity's layer index.
+                 * @returns {number}
                  */
                 static get my_zIndex() {
                     return Action.component.getComponent(Action.#bindID, "layer").index;
                 }
             };
             static sounds = class {
-                static load() {};
                 /**
-                 * The sounds_play waits the sound loaded and play it.
-                 * @param {string} name The name of sound.
-                 * @param {number} when The time when the sound starts playing, in seconds.
-                 * @param {number} offset An offset, specified as the number of seconds in the same time coordinate system as the AudioContext, to the time within the audio buffer that playback should begin.
-                 * @param {number} detune A k-rate AudioParam whose value indicates the detuning of oscillation in cents.
-                 * @param {boolean} loop The loop property of the AudioBufferSourceNode interface is a Boolean indicating if the audio asset must be replayed when the end of the AudioBuffer is reached.
-                 * @param {number} loopStart The loopStart property of the AudioBufferSourceNode interface is a floating-point value indicating, in seconds, where in the AudioBuffer the restart of the play must happen.
-                 * @param {number} loopEnd The loopEnd property of the AudioBufferSourceNode interface specifies is a floating point number specifying, in seconds, at what offset into playing the AudioBuffer playback should loop back to the time indicated by the loopStart property. This is only used if the loop property is true.
-                 * @param {number} playBackRate The playbackRate property of the AudioBufferSourceNode interface Is a k-rate AudioParam that defines the speed at which the audio asset will be played.
+                 * Placeholder for future sound preloading logic.
+                 * @returns {void}
+                 */
+                static load() {};
+
+                /**
+                 * Play a loaded sound for the current bound entity.
+                 * @param {string} name The name of the sound asset.
+                 * @param {number} [when=0] Delay before playback starts, in seconds.
+                 * @param {number} [offset=0] Offset into the audio buffer, in seconds.
+                 * @param {number} [detune=0] Detune in cents.
+                 * @param {boolean} [loop=false] Whether the sound should loop.
+                 * @param {number} [loopStart=0] Loop start offset in seconds.
+                 * @param {number} [loopEnd=0] Loop end offset in seconds.
+                 * @param {number} [playBackRate=1.0] Playback speed multiplier.
                  * @returns {Promise<number>}
+                 * @throws {TypeError} If any argument has an unexpected type.
                  */
                 static async play(name, when = 0, offset = 0, detune = 0, loop = false, loopStart = 0, loopEnd = 0, playBackRate = 1.0) {
                     Action.throwTypeError(name, "string", "sounds.play", "sound's name");
@@ -2074,9 +2257,10 @@ class JScratch {
                     });
                 };
                 /**
-                 * The sounds_pause pauses the sound with the specified id. And you can use regret to continue it.
-                 * @param {number} id The id of the sound.
+                 * Pause a playing sound by its playback ID.
+                 * @param {number} id The playback ID returned by play().
                  * @returns {number}
+                 * @throws {TypeError} If id is not a number.
                  */
                 static pause(id) {
                     Action.throwTypeError(id, "number", "sounds.pause", "sound's id");
@@ -2084,16 +2268,20 @@ class JScratch {
                     return id;
                 };
                 /**
-                 * The sounds_stop stop the sound with the specified id.
-                 * @param {number} id The id of the sound.
+                 * Stop and remove a playing sound by its playback ID.
+                 * @param {number} id The playback ID returned by play().
+                 * @returns {void}
+                 * @throws {TypeError} If id is not a number.
                  */
                 static stop(id) {
                     Action.throwTypeError(id, "number", "sounds.stop", "sound's id");
                     JScratchThis.#musician.stop(id);
                 };
                 /**
-                 * The sounds_regret continues playing the sound.
-                 * @param {number} id The id of the sound.
+                 * Resume a paused sound by its playback ID.
+                 * @param {number} id The playback ID returned by play().
+                 * @returns {void}
+                 * @throws {TypeError} If id is not a number.
                  */
                 static regret(id) {
                     Action.throwTypeError(id, "number", "sounds.regret", "sound's id");
@@ -2102,65 +2290,105 @@ class JScratch {
             };
             static event = class {
                 /**
-                 * The event_on binds a function to the Event.
-                 * @param {string} event The event's name.
-                 * @param {()=>void} func The function to bind.
-                 * @param {boolean} once Is this the one time event?
+                 * Bind a listener function to an event.
+                 * @param {string} event The event name.
+                 * @param {() => void} func The listener function.
+                 * @param {boolean} [once=false] Whether the listener should be removed after first trigger.
+                 * @returns {void}
+                 * @throws {TypeError} If event is not a string or func is not a function.
                  */
                 static on(event, func, once = false) {
                     JScratchThis.#eventBus.event(event).on(Action.#bindID, func, once);
                 };
                 /**
-                 * The event_off unbinds a function from the event.
-                 * @param {string} event The event's name.
+                 * Remove the bound listener for the current entity from an event.
+                 * @param {string} event The event name.
+                 * @returns {void}
+                 * @throws {TypeError} If event is not a string.
                  */
                 static off(event) {
                     JScratchThis.#eventBus.event(event).off(Action.#bindID);
                 };
                 /**
-                 * The event_isOn shows that the bound entity has been bound to a function on the event or not.
-                 * @param {string} event The event's name.
+                 * Determine whether the current entity has a listener bound to an event.
+                 * @param {string} event The event name.
                  * @returns {boolean}
+                 * @throws {TypeError} If event is not a string.
                  */
                 static isOn(event) {
                     return JScratchThis.#eventBus.event(event).is_on(Action.#bindID);
                 };
 
                 /**
-                 * The event_has returns true if the specified event has been bound to eventBus, or false.
-                 * @param {string} event The event's name.
+                 * Check whether an event exists in the event bus.
+                 * @param {string} event The event name.
                  * @returns {boolean}
+                 * @throws {TypeError} If event is not a string.
                  */
                 static has(event) {
                     return JScratchThis.#eventBus.has(event);
                 };
                 /**
-                 * The event_create creates a event with the given name.
-                 * @param {string} event The event's name will be created.
+                 * Create a new event in the event bus.
+                 * @param {string} event The event name to create.
+                 * @returns {void}
+                 * @throws {TypeError} If event is not a string.
                  */
                 static create(event) {
                     JScratchThis.#eventBus.create(Action.#bindID, event);
                 };
                 /**
-                 * The event_break deletes the event from eventBus.
-                 * @param {string} event The event's name.
+                 * Delete an event from the event bus.
+                 * @param {string} event The event name to delete.
+                 * @returns {void}
+                 * @throws {TypeError} If event is not a string.
                  */
                 static break(event) {
                     JScratchThis.#eventBus.break(event);
                 };
             };
             static sensing = class {
+                /**
+                 * Determine whether the bound entity's hitbox intersects another entity's hitbox.
+                 * @param {number} id The target entity ID.
+                 * @param {string} type The hitbox type name to compare.
+                 * @returns {boolean}
+                 * @throws {TypeError} If id is not a number or type is not a string.
+                 */
                 static touchID(id, type) {
+                    Action.throwTypeError(id, "number", "sensing.touchID", "id");
+                    Action.throwTypeError(type, "string", "sensing.touchID", "type");
                     return this.myHitbox.collision(type, this.getHitbox(id), type);
                 };
+
+                /**
+                 * Determine whether the bound entity intersects any entity of a given klass.
+                 * @param {string} klass The klass name.
+                 * @param {string} type The hitbox type name to compare.
+                 * @returns {boolean}
+                 * @throws {TypeError} If klass or type is not a string.
+                 */
                 static touchKlass(klass, type) {
+                    Action.throwTypeError(klass, "string", "sensing.touchKlass", "klass");
+                    Action.throwTypeError(type, "string", "sensing.touchKlass", "type");
                     const myHitbox = this.myHitbox;
                     for (const id of Action.component.queryByKlass(klass)) {
                         if (myHitbox.collision(type, this.getHitbox(id), type)) return true;
                     }
                     return false;
                 };
+                /**
+                 * Determine whether the bound entity intersects any entity of a given klass and kind.
+                 * @param {string} klass The klass name.
+                 * @param {string} kind The kind name.
+                 * @param {string} type The hitbox type name to compare.
+                 * @returns {boolean}
+                 * @throws {TypeError} If klass, kind, or type is not a string.
+                 */
                 static touchKind(klass, kind, type) {
+                    Action.throwTypeError(klass, "string", "sensing.touchKind", "klass");
+                    Action.throwTypeError(kind, "string", "sensing.touchKind", "kind");
+                    Action.throwTypeError(type, "string", "sensing.touchKind", "type");
                     const myHitbox = this.myHitbox;
                     for (const id of Action.component.queryByKind(klass, kind)) {
                         if (myHitbox.collision(type, this.getHitbox(id), type)) return true;
@@ -2168,72 +2396,229 @@ class JScratch {
                     return false;
                 };
 
-                // static distanceFromID(id) {};
-                // static distanceFromKlass_least(klass) {};
-                // static distanceFromKlass_most(klass) {};
-                // static distanceFromKlass_average(klass) {};
-                // static distanceFromKlass_list(klass) {};
-                // static distanceFromKlass_map(klass) {};
-                // static distanceFromKind_least(klass, kind) {};
-                // static distanceFromKind_most(klass, kind) {};
-                // static distanceFromKind_average(klass, kind) {};
-                // static distanceFromKind_list(klass, kind) {};
-                // static distanceFromKind_map(klass, kind) {};
-
+                /**
+                 * Get the current mouse x position in screen coordinates.
+                 * @returns {number}
+                 */
                 static get mouseX() {
                     return JScratchThis.#scratchTools.Mouse.mouseX;
                 };
+
+                /**
+                 * Get the current mouse y position in screen coordinates.
+                 * @returns {number}
+                 */
                 static get mouseY() {
                     return JScratchThis.#scratchTools.Mouse.mouseY;
                 };
+
+                /**
+                 * Get the current mouse position converted into the camera's local coordinates.
+                 * @returns {number}
+                 */
+                static get cameraMouseX() {
+                    const camera = JScratchThis.#cameraManager;
+                    const inverseScale = camera.cameraScale === 0 ? 1 : 1 / camera.cameraScale;
+                    return MathPlus.Matrix.translate(this.mouseX, this.mouseY, camera.cameraX, camera.cameraY, inverseScale, camera.cameraRotate)[0];
+                };
+
+                /**
+                 * Get the current mouse position converted into the camera's local coordinates.
+                 * @returns {number}
+                 */
+                static get cameraMouseY() {
+                    const camera = JScratchThis.#cameraManager;
+                    const inverseScale = camera.cameraScale === 0 ? 1 : 1 / camera.cameraScale;
+                    return MathPlus.Matrix.translate(this.mouseX, this.mouseY, camera.cameraX, camera.cameraY, inverseScale, camera.cameraRotate)[1];
+                };
+
+                /**
+                 * Get the current mouse position converted into world coordinates.
+                 * @returns {number}
+                 */
+                static get worldMouseX() {
+                    const camera = JScratchThis.#cameraManager;
+                    return MathPlus.Matrix.inverseTranslate(this.mouseX, this.mouseY, -camera.cameraX, -camera.cameraY, camera.cameraScale, -camera.cameraRotate)[0];
+                };
+
+                /**
+                 * Get the current mouse position converted into world coordinates.
+                 * @returns {number}
+                 */
+                static get worldMouseY() {
+                    const camera = JScratchThis.#cameraManager;
+                    return MathPlus.Matrix.inverseTranslate(this.mouseX, this.mouseY, -camera.cameraX, -camera.cameraY, camera.cameraScale, -camera.cameraRotate)[1];
+                }
+                /**
+                 * Check whether a key is currently pressed.
+                 * @param {string} key The key name.
+                 * @returns {boolean}
+                 * @throws {TypeError} If key is not a string.
+                 */
                 static is_press(key) {
+                    Action.throwTypeError(key, "string", "sensing.is_press", "key");
                     return JScratchThis.#keysListener.isKeyPress(key);
                 };
+
+                /**
+                 * Get the current state of a key.
+                 * @param {string} key The key name.
+                 * @returns {string}
+                 * @throws {TypeError} If key is not a string.
+                 */
                 static press_state(key) {
+                    Action.throwTypeError(key, "string", "sensing.press_state", "key");
                     return JScratchThis.#keysListener.keyState(key);
                 };
+
+                /**
+                 * Get how long a key has been pressed in milliseconds.
+                 * @param {string} key The key name.
+                 * @returns {number}
+                 * @throws {TypeError} If key is not a string.
+                 */
                 static press_millisecond(key) {
+                    Action.throwTypeError(key, "string", "sensing.press_millisecond", "key");
                     return Date.now() - JScratchThis.#keysListener.keyPressTime(key);
                 };
+
+                /**
+                 * Get how many update ticks a key has been processed in.
+                 * @param {string} key The key name.
+                 * @returns {number}
+                 * @throws {TypeError} If key is not a string.
+                 */
                 static press_updateCount(key) {
+                    Action.throwTypeError(key, "string", "sensing.press_updateCount", "key");
                     return JScratchThis.#keysListener.keyUpdateCount(key);
                 };
 
-                // static startTimer() {};
-                // static clearTimer() {};
-                // static getTimer() {};
+                /**
+                 * Start a named timer.
+                 * @param {string} name The timer name.
+                 * @returns {void}
+                 * @throws {TypeError} If name is not a string.
+                 */
+                static startTimer(name) {
+                    Action.throwTypeError(name, "string", "sensing.startTimer", "name");
+                    JScratchThis.#timers.startTimer(name);
+                };
 
                 /**
-                 * @type {Hitbox}
+                 * Clear a named timer.
+                 * @param {string} name The timer name.
+                 * @returns {void}
+                 * @throws {TypeError} If name is not a string.
+                 */
+                static clearTimer(name) {
+                    Action.throwTypeError(name, "string", "sensing.clearTimer", "name");
+                    JScratchThis.#timers.clearTimer(name);
+                };
+
+                /**
+                 * Get the elapsed time of a named timer in milliseconds.
+                 * @param {string} name The timer name.
+                 * @returns {number}
+                 * @throws {TypeError} If name is not a string.
+                 */
+                static getTimer(name) {
+                    Action.throwTypeError(name, "string", "sensing.getTimer", "name");
+                    return JScratchThis.#timers.getTimer(name);
+                };
+
+                /**
+                 * Check whether a named timer exists.
+                 * @param {string} name The timer name.
+                 * @returns {boolean}
+                 * @throws {TypeError} If name is not a string.
+                 */
+                static hasTimer(name) {
+                    Action.throwTypeError(name, "string", "sensing.hasTimer", "name");
+                    return JScratchThis.#timers.hasTimer(name);
+                };
+
+                /**
+                 * Get the current bound entity's hitbox.
+                 * @returns {Hitbox}
                  */
                 static get myHitbox() {
                     return this.getHitbox(Action.#bindID);
                 }
+
+                /**
+                 * Get the hitbox of a specific entity and ensure it is translated.
+                 * @param {number} id The entity ID.
+                 * @returns {Hitbox}
+                 * @throws {TypeError} If id is not a number.
+                 */
                 static getHitbox(id) {
+                    Action.throwTypeError(id, "number", "sensing.getHitbox", "id");
                     Action.component.translateHitbox(id);
                     return Action.component.getComponent(id, "hitbox");
                 }
             };
             static system = class {
+                /**
+                 * Print messages to the terminal log.
+                 * @param {...any} messages Messages to output.
+                 * @returns {void}
+                 */
                 static log(...messages) {
                     Terminal.log(...messages);
                 };
+                /**
+                 * Print warnings to the terminal.
+                 * @param {...any} messages Messages to output.
+                 * @returns {void}
+                 */
                 static warn(...messages) {
                     Terminal.warn(...messages);
                 };
+
+                /**
+                 * Print errors to the terminal.
+                 * @param {...any} messages Messages to output.
+                 * @returns {void}
+                 */
                 static error(...messages) {
                     Terminal.error(...messages);
                 };
+
+                /**
+                 * Print debug messages to the terminal.
+                 * @param {...any} messages Messages to output.
+                 * @returns {void}
+                 */
                 static debug(...messages) {
                     Terminal.debug(...messages);
                 };
+
+                /**
+                 * End the game loop.
+                 * @returns {void}
+                 */
                 static end() {
                     JScratchThis.end();
                 };
+
+                /**
+                 * Start the game loop.
+                 * @returns {void}
+                 */
                 static start() {
                     JScratchThis.start();
                 };
+
+                /**
+                 * Execute a callback after a delay with the current entity binding preserved.
+                 * @param {() => void} func The callback to run.
+                 * @param {number} delay The delay in milliseconds.
+                 * @returns {number}
+                 * @throws {TypeError} If func is not a function or delay is not a number.
+                 */
                 static delay(func, delay) {
+                    Action.throwTypeError(func, "function", "system.delay", "func");
+                    Action.throwTypeError(delay, "number", "system.delay", "delay");
                     const id = Action.#bindID;
                     return setTimeout(() => {
                         const currentId = Action.#bindID;
@@ -2245,92 +2630,125 @@ class JScratch {
             };
             static camera = class {
                 /**
-                 * The camera_moveCamera moves the camera by given steps.
-                 * @param {number} step The steps to move camera.
+                 * Move the camera forward by a given number of units.
+                 * @param {number} step The movement distance.
+                 * @returns {void}
+                 * @throws {TypeError} If step is not a number.
                  */
                 static moveCamera(step) {
                     JScratchThis.#cameraManager.moveCamera(step);
                 };
                 /**
-                 * The camera_cameraGoto sets the position of camera to the given position.
+                 * Set the camera position to an absolute world-space coordinate.
                  * @param {number} x The target x.
                  * @param {number} y The target y.
+                 * @returns {void}
+                 * @throws {TypeError} If x or y is not a number.
                  */
                 static cameraGoto(x, y) {
                     JScratchThis.#cameraManager.cameraX = x;
                     JScratchThis.#cameraManager.cameraY = y;
                 };
                 /**
-                 * The camera_cameraGoX sets the x of camera to the given x.
+                 * Set the camera x position.
                  * @param {number} x The target x.
+                 * @returns {void}
+                 * @throws {TypeError} If x is not a number.
                  */
                 static cameraGoX(x) {
                     JScratchThis.#cameraManager.cameraX = x;
                 };
                 /**
-                 * The camera_cameraGoY sets the y of camera to the given y.
+                 * Set the camera y position.
                  * @param {number} y The target y.
+                 * @returns {void}
+                 * @throws {TypeError} If y is not a number.
                  */
                 static cameraGoY(y) {
                     JScratchThis.#cameraManager.cameraY = y;
                 };
                 /**
-                 * The camera_cameraChangePosition adds the given position to the position of camera.
-                 * @param {number} x The x to add.
-                 * @param {number} y The y to add.
+                 * Move the camera by a delta.
+                 * @param {number} x The x delta.
+                 * @param {number} y The y delta.
+                 * @returns {void}
+                 * @throws {TypeError} If x or y is not a number.
                  */
                 static cameraChangePosition(x, y) {
                     JScratchThis.#cameraManager.cameraX += x;
                     JScratchThis.#cameraManager.cameraY += y;
                 };
                 /**
-                 * The camera_cameraChangeX adds the given x to the x of camera.
-                 * @param {number} x The x to add.
+                 * Move the camera along the x axis.
+                 * @param {number} x The x delta.
+                 * @returns {void}
+                 * @throws {TypeError} If x is not a number.
                  */
                 static cameraChangeX(x) {
                     JScratchThis.#cameraManager.cameraX += x;
                 };
                 /**
-                 * The camera_cameraChangeY adds the given y to the y of camera.
-                 * @param {number} y The y to add.
+                 * Move the camera along the y axis.
+                 * @param {number} y The y delta.
+                 * @returns {void}
+                 * @throws {TypeError} If y is not a number.
                  */
                 static cameraChangeY(y) {
                     JScratchThis.#cameraManager.cameraY += y;
                 };
                 /**
-                 * The camera_turnCamera adds the given degrees to the rotate of camera.
-                 * @param {number} degrees The degrees to add.
+                 * Rotate the camera by a relative angle.
+                 * @param {number} degrees The rotation delta in degrees.
+                 * @returns {void}
+                 * @throws {TypeError} If degrees is not a number.
                  */
                 static turnCamera(degrees) {
                     JScratchThis.#cameraManager.cameraRotate += degrees;
                 };
                 /**
-                 * The camera_cameraRotate sets the rotate of camera to the given direction.
-                 * @param {number} direction The target direction.
+                 * Set the camera rotation to an absolute angle.
+                 * @param {number} direction The target rotation in degrees.
+                 * @returns {void}
+                 * @throws {TypeError} If direction is not a number.
                  */
                 static cameraRotate(direction) {
                     JScratchThis.#cameraManager.cameraRotate = direction;
                 };
                 /**
-                 * The camera_scaleCamera sets the scale of camera to the given scale.
+                 * Set the camera scale to an absolute value.
                  * @param {number} scale The target scale.
+                 * @returns {void}
+                 * @throws {TypeError} If scale is not a number.
                  */
                 static scaleCamera(scale) {
                     JScratchThis.#cameraManager.cameraScale = scale;
                 };
                 /**
-                 * The camera_addScale adds the given scale to the scale of camera.
-                 * @param {number} scale The scale to add.
+                 * Increase the camera scale by a delta.
+                 * @param {number} scale The scale delta.
+                 * @returns {void}
+                 * @throws {TypeError} If scale is not a number.
                  */
                 static addScale(scale) {
                     JScratchThis.#cameraManager.cameraScale += scale;
                 };
                 /**
-                 * The camera_addScale adds the given scale to the scale of camera.
-                 * @param {number} scale The scale to multiply.
+                 * Multiply the camera scale by a factor.
+                 * @param {number} scale The multiplier.
+                 * @returns {void}
+                 * @throws {TypeError} If scale is not a number.
                  */
                 static mulScale(scale) {
                     JScratchThis.#cameraManager.cameraScale *= scale;
+                }
+                /**
+                 * Set the component follow.
+                 * @param {boolean} follow Is to follow camera?
+                 * @throws {TypeError} If follow is not a boolean.
+                 */
+                static followCamera(follow) {
+                    Action.throwTypeError(follow, "boolean", "camera.followCamera", "follow");
+                    Action.component.setComponent(Action.#bindID, "follow", follow);
                 }
                 /**
                  * Return the x of camera.
@@ -2360,32 +2778,45 @@ class JScratch {
                 static get cameraScale() {
                     return JScratchThis.#cameraManager.cameraScale;
                 };
+                /**
+                 * Return I am following camera or not.
+                 * @type {boolean}
+                 */
+                static get myFollow() {
+                    return Action.component.getComponent(Action.#bindID, "follow");
+                }
             };
             static component = class {
                 /**
-                 * Get the value of component by the given id.
-                 * @param {number} entityId Target entity's id.
-                 * @param {string} component The name of component that to get.
+                 * Get the value of a component for a specific entity.
+                 * @param {number} entityId Target entity ID.
+                 * @param {string} component The component name.
+                 * @returns {any}
+                 * @throws {TypeError} If entityId is not a number or component is not a string.
                  */
                 static getComponent(entityId, component) {
                     return Components.get(component).getEntityValue(entityId);
                 };
 
                 /**
-                 * Set the value of component by the given value.
-                 * @param {number} entityId Target entity's id.
-                 * @param {string} component The name of component that to set.
-                 * @param {unknown} value The value will be used to set.
+                 * Set the value of a component for a specific entity.
+                 * @param {number} entityId Target entity ID.
+                 * @param {string} component The component name.
+                 * @param {any} value The value to assign.
+                 * @returns {void}
+                 * @throws {TypeError} If entityId is not a number or component is not a string.
                  */
                 static setComponent(entityId, component, value) {
                     Components.get(component).setEntity(entityId, value);
                 };
 
                 /**
-                 * Add the value of component to the given value.
-                 * @param {number} entityId Target entity's id.
-                 * @param {string} component The name of component that to add.
-                 * @param {unknown} value The value will be used to add.
+                 * Add a numeric delta to a component value for a specific entity.
+                 * @param {number} entityId Target entity ID.
+                 * @param {string} component The component name.
+                 * @param {number} value The value to add.
+                 * @returns {void}
+                 * @throws {TypeError} If entityId is not a number, component is not a string, or value is not a number.
                  */
                 static addComponent(entityId, component, value) {
                     Components.get(component).addValue(entityId, value);
@@ -2413,23 +2844,67 @@ class JScratch {
                     );
                 };
 
+                /**
+                 * Query entity IDs by klass.
+                 * @param {string} klass The klass name.
+                 * @returns {number[]}
+                 * @throws {TypeError} If klass is not a string.
+                 */
                 static queryByKlass(klass) {
+                    Action.throwTypeError(klass, "string", "component.queryByKlass", "klass");
                     return this.queryByEquation("klass", klass);
                 };
+
+                /**
+                 * Query entity IDs by klass and kind.
+                 * @param {string} klass The klass name.
+                 * @param {string} kind The kind name.
+                 * @returns {number[]}
+                 * @throws {TypeError} If klass or kind is not a string.
+                 */
                 static queryByKind(klass, kind) {
+                    Action.throwTypeError(klass, "string", "component.queryByKind", "klass");
+                    Action.throwTypeError(kind, "string", "component.queryByKind", "kind");
                     const klassItem = this.queryByEquation("klass", klass);
                     const kindItem = this.queryByEquation("kind", kind, klassItem);
 
                     return kindItem;
                 };
+                /**
+                 * Query entity IDs by comparing a component value.
+                 * @param {string} component The component name.
+                 * @param {any} targetValue The expected value.
+                 * @param {number[] | null} [targets=null] Optional entity ID restriction.
+                 * @returns {number[]}
+                 * @throws {TypeError} If component is not a string.
+                 */
                 static queryByEquation(component, targetValue, targets = null) {
+                    Action.throwTypeError(component, "string", "component.queryByEquation", "component");
                     return JScratchThis.#components.get(component).test(value => value === targetValue, targets);
                 };
+
+                /**
+                 * Query entity IDs by a predicate function.
+                 * @param {string} component The component name.
+                 * @param {(value: any) => boolean} func The predicate.
+                 * @param {number[] | null} [targets=null] Optional entity ID restriction.
+                 * @returns {number[]}
+                 * @throws {TypeError} If component is not a string or func is not a function.
+                 */
                 static queryByFunc(component, func, targets) {
+                    Action.throwTypeError(component, "string", "component.queryByFunc", "component");
+                    Action.throwTypeError(func, "function", "component.queryByFunc", "func");
                     return JScratchThis.#components.get(component).test(func, targets);
                 };
 
+                /**
+                 * Delete an entity from the engine.
+                 * @param {number} id The entity ID to delete.
+                 * @returns {void}
+                 * @throws {TypeError} If id is not a number.
+                 */
                 static deleteEntity(id) {
+                    Action.throwTypeError(id, "number", "component.deleteEntity", "id");
                     JScratchThis.deleteEntity(id);
                 };
             };
@@ -2443,38 +2918,48 @@ class JScratch {
                 };
 
                 /**
-                 * The variable_set_constant declares a constant with the given value. It's immutable.
-                 * @param {string} name The name of constant.
-                 * @param {unknown} value The value of constant.
+                 * Declare an immutable constant on the bound entity.
+                 * @param {string} name The constant name.
+                 * @param {any} value The constant value.
+                 * @returns {void}
+                 * @throws {TypeError} If name is not a string.
                  */
                 static set_constant(name, value) {
+                    Action.throwTypeError(name, "string", "variable.set_constant", "name");
                     this.#thisVariable.set_constant(name, value);
                 };
 
                 /**
-                 * The variable_set_variable declares a variable with the given value.
-                 * @param {string} name The name of variable.
-                 * @param {unknown} value The value of variable.
+                 * Declare or update a mutable variable on the bound entity.
+                 * @param {string} name The variable name.
+                 * @param {any} value The variable value.
+                 * @returns {void}
+                 * @throws {TypeError} If name is not a string.
                  */
                 static set_variable(name, value) {
+                    Action.throwTypeError(name, "string", "variable.set_variable", "name");
                     this.#thisVariable.set_variable(name, value);
                 };
 
                 /**
-                 * The variable_get_constant gets the value of the constant and return.
-                 * @param {string} name The name of constant.
-                 * @returns {unknown}
+                 * Get a constant value from the bound entity.
+                 * @param {string} name The constant name.
+                 * @returns {any}
+                 * @throws {TypeError} If name is not a string.
                  */
                 static get_constant(name) {
+                    Action.throwTypeError(name, "string", "variable.get_constant", "name");
                     return this.#thisVariable.get_constant(name);
                 };
 
                 /**
-                 * The variable_get_variable gets the value of the variable and return.
-                 * @param {string} name The name of variable.
-                 * @returns {unknown}
+                 * Get a variable value from the bound entity.
+                 * @param {string} name The variable name.
+                 * @returns {any}
+                 * @throws {TypeError} If name is not a string.
                  */
                 static get_variable(name) {
+                    Action.throwTypeError(name, "string", "variable.get_variable", "name");
                     return this.#thisVariable.get_variable(name);
                 };
 
@@ -2485,40 +2970,47 @@ class JScratch {
                 static get #globalVariable() {
                     return JScratchThis.#globalVariables;
                 };
-
                 /**
-                 * The variable_set_globalConstant declares a global constant with the given value. It's immutable.
-                 * @param {string} name The name of constant.
-                 * @param {unknown} value The value of constant.
+                 * Declare an immutable global constant.
+                 * @param {string} name The constant name.
+                 * @param {any} value The constant value.
+                 * @returns {void}
+                 * @throws {TypeError} If name is not a string.
                  */
                 static set_globalConstant(name, value) {
+                    Action.throwTypeError(name, "string", "variable.set_globalConstant", "name");
                     this.#globalVariable.set_constant(name, value);
                 };
 
                 /**
-                 * The variable_set_globalVariable declares a global variable with the given value.
-                 * @param {string} name The name of variable.
-                 * @param {unknown} value The value of variable.
+                 * Declare or update a mutable global variable.
+                 * @param {string} name The variable name.
+                 * @param {any} value The variable value.
+                 * @returns {void}
+                 * @throws {TypeError} If name is not a string.
                  */
                 static set_globalVariable(name, value) {
+                    Action.throwTypeError(name, "string", "variable.set_globalVariable", "name");
                     this.#globalVariable.set_variable(name, value);
                 };
-
                 /**
-                 * The variable_get_globalConstant gets the value of the global constant and return.
-                 * @param {string} name The name of constant.
-                 * @returns {unknown}
+                 * Get a global constant value.
+                 * @param {string} name The constant name.
+                 * @returns {any}
+                 * @throws {TypeError} If name is not a string.
                  */
                 static get_globalConstant(name) {
+                    Action.throwTypeError(name, "string", "variable.get_globalConstant", "name");
                     return this.#globalVariable.get_constant(name);
                 };
-
                 /**
-                 * The variable_get_globalVariable gets the value of the global variable and return.
-                 * @param {string} name The name of variable.
-                 * @returns {unknown}
+                 * Get a global variable value.
+                 * @param {string} name The variable name.
+                 * @returns {any}
+                 * @throws {TypeError} If name is not a string.
                  */
                 static get_globalVariable(name) {
+                    Action.throwTypeError(name, "string", "variable.get_globalVariable", "name");
                     return this.#globalVariable.get_variable(name);
                 };
             };
@@ -2719,9 +3211,12 @@ class JScratch {
     };
 }
 
-scratchVM.JScratchMounter.JScratchGame = new JScratch(scratchVM, [], ["UI", "foreground", "midground", "afterview", "background"], 1 / 240, function () {
+mounter.JScratchGame = new JScratch(scratchVM, [], ["UI", "foreground", "midground", "afterview", "background"], 1 / 240, function () {
     /**@type {JScratch} */
     const GAME = this;
+
+    /* 该示例由 AI (Copilot)创作 This example was created by AI (Copilot) */
+    /* 没来得及写文档 */
 
     class System extends GAME.Action {
         static #action_system() {
@@ -2751,7 +3246,7 @@ scratchVM.JScratchMounter.JScratchGame = new JScratch(scratchVM, [], ["UI", "for
                 return;
             }
 
-            if (score >= 10 && !systemVariable.get_variable("game_clear")) {
+            if (score >= 30 && !systemVariable.get_variable("game_clear")) {
                 systemVariable.set_variable("game_clear", true);
                 this.system.log("Stage clear! You collected enough stars.");
                 this.system.end();
@@ -2776,6 +3271,11 @@ scratchVM.JScratchMounter.JScratchGame = new JScratch(scratchVM, [], ["UI", "for
             this.camera.scaleCamera(1);
 
             GAME.createEntity({
+                klass: "system",
+                kind: "mouse"
+            });
+
+            GAME.createEntity({
                 klass: "player",
                 kind: "player",
                 x: 0,
@@ -2788,12 +3288,15 @@ scratchVM.JScratchMounter.JScratchGame = new JScratch(scratchVM, [], ["UI", "for
                 variable: (new Variable()).set_constant("speed", 2).set_constant("radius", 24)
             });
 
-            for (let index = 0; index < 6; index++) {
+            const width = 1280;
+            const height = 720;
+
+            for (let index = 0; index < 25; index++) {
                 GAME.createEntity({
                     klass: "wall",
                     kind: "wall",
-                    x: MathPlus.random(-220, 220),
-                    y: MathPlus.random(-120, 120),
+                    x: MathPlus.random(-width/2, width/2),
+                    y: MathPlus.random(-height/2, height/2),
                     visible: true,
                     follow: true,
                     layer: new GAME.layerManager.Layer("background", index),
@@ -2802,12 +3305,12 @@ scratchVM.JScratchMounter.JScratchGame = new JScratch(scratchVM, [], ["UI", "for
                 });
             }
 
-            for (let index = 0; index < 10; index++) {
+            for (let index = 0; index < 30; index++) {
                 GAME.createEntity({
                     klass: "coin",
                     kind: "coin",
-                    x: MathPlus.random(-220, 220),
-                    y: MathPlus.random(-120, 120),
+                    x: MathPlus.random(-width/2, width/2),
+                    y: MathPlus.random(-height/2, height/2),
                     visible: true,
                     follow: true,
                     layer: new GAME.layerManager.Layer("foreground", index),
@@ -2817,28 +3320,40 @@ scratchVM.JScratchMounter.JScratchGame = new JScratch(scratchVM, [], ["UI", "for
                 });
             }
 
-            for (let index = 0; index < 4; index++) {
+            for (let index = 0; index < 5; index++) {
                 GAME.createEntity({
                     klass: "enemy",
                     kind: "enemy",
-                    x: MathPlus.random(-220, 220),
-                    y: MathPlus.random(-120, 120),
+                    x: MathPlus.random(-width/2, width/2),
+                    y: MathPlus.random(-height/2, height/2),
                     visible: true,
                     follow: true,
                     layer: new GAME.layerManager.Layer("foreground", index + 20),
                     hitbox: Hitbox.rectBox(-14, 14, 28, 28),
                     skin: "enemy",
-                    variable: (new Variable()).set_constant("speed", 0.8 + index * 0.1)
+                    variable: (new Variable()).set_constant("speed", 0.5 + index * 0.2)
                 });
             }
         };
 
+        static #action_mouse() {
+            this.motion.goto(this.sensing.cameraMouseX, this.sensing.cameraMouseY);
+        }
+
+        static #init_mouse() {
+            this.looks.setSkin("cursor");
+            this.looks.visible(true);
+            this.camera.followCamera(true);
+        }
+
         static kinds = {
-            "system": this.#action_system
+            "system": this.#action_system,
+            "mouse": this.#action_mouse
         };
 
         static init = {
-            "system": this.#init_system
+            "system": this.#init_system,
+            "mouse": this.#init_mouse
         };
 
         static defaultComponents = {
@@ -2893,7 +3408,7 @@ scratchVM.JScratchMounter.JScratchGame = new JScratch(scratchVM, [], ["UI", "for
             const wallIds = this.component.queryByKind("wall", "wall");
             wallIds.forEach((wallId) => {
                 if (this.sensing.touchID(wallId, "default")) {
-                    this.motion.changePosition(-dx * 0.4, -dy * 0.4);
+                    this.motion.changePosition(-dx * 0.7, -dy * 0.7);
                 }
             });
         };
@@ -2967,7 +3482,7 @@ scratchVM.JScratchMounter.JScratchGame = new JScratch(scratchVM, [], ["UI", "for
             const playerId = this.component.queryByKlass("player")[0];
             if (playerId) {
                 this.motion.pointEntity(playerId);
-                //this.motion.move(this.variable.get_constant("speed"));
+                this.motion.move(this.variable.get_constant("speed"));
             }
             this.looks.setScale(1 + Math.sin(Date.now() / 250) * 0.02);
         };
@@ -3032,11 +3547,10 @@ scratchVM.JScratchMounter.JScratchGame = new JScratch(scratchVM, [], ["UI", "for
     GAME.createEntity({ klass: "system", kind: "system", visible: false, skin: "null" });
 }, function () {}, function () {});
 
-scratchVM.JScratchMounter.JScratchGame.start();
-
+mounter.JScratchGame.start();
 }
 catch (e) {
-    scratchVM.JScratchMounter.GameError = e;
+    mounter.GameError = e;
     // eslint-disable-next-line no-console
     console.error(e);
     throw new e;
